@@ -9,6 +9,8 @@ import(
     "io/ioutil"
     "errors"
     "time"
+    "math/rand"
+    "math"
 )
 
 
@@ -34,6 +36,8 @@ var endPoints_G EndPoints
 var requestCount_G int
 
 var requestsMap_G RequestsMap
+
+var functionInfoMap_G FunctionInfoMap
 
 // log.SetLevel(log.DebugLevel)
 //add deploynode to request
@@ -73,56 +77,216 @@ func updateTopo(operator string, phyNodeID int, mem float64){
     }
 }
 
+
+func getContainerSize(funcType int) float64{
+
+    switch funcType {
+    case 1:
+        f := container_1
+        return f.Size
+    case 2:
+        f := container_2
+        return f.Size
+    case 3:
+        f := container_3
+        return f.Size
+    case 4:
+        f := container_4
+        return f.Size
+    }
+    
+    return 0
+}
+
+func getCPU(nodeID int) float64{
+    p := topo_G.get(nodeID)
+    if p.ID == 0 {
+        log.Printf( "cannot find the node ....", nodeID)
+        return 0
+    }else{
+        return p.cpuFreq
+    }
+
+}
+
+func getInstanCost(nodeID int, funcType int) float64{
+    cpuFreq := getCPU(nodeID)
+    size := getContainerSize(funcType)
+    instanCost := float64(size/cpuFreq)
+
+    if cpuFreq == 0 || instanCost ==0{
+        return 0
+    }
+    log.Printf( "getInstanCost is 0....")
+    return instanCost
+}
+
+func getProb(nodeID int, funcType int) float64{
+    //get the phynode
+    p := topo_G.get(nodeID)
+
+    // instanCost := getInstanCost(nodeID, funcType)
+
+    freq := p.getFreq(funcType)
+
+    recen := p.getRecency(funcType)
+
+    size := getContainerSize(funcType)
+
+    if freq==0 || recen ==0 || size ==0{
+        log.Printf( "Probability is 0....")
+        return 0
+    }
+
+    if math.IsNaN(freq) || math.IsNaN(recen) || math.IsNaN(size){
+        log.Printf( "Probability is NaN....")
+        return 0
+    }
+
+
+    return float64(size/(freq+recen)/1000)
+
+}
+
+func initFuncMap(){
+    functionInfoMap_G.add(1, container_1)
+
+    functionInfoMap_G.add(2, container_2)
+    
+    functionInfoMap_G.add(3, container_3)
+    
+    functionInfoMap_G.add(4, container_4)
+
+}
+
+
+func getEvictedContainer(nodeID int, reqFuncType int ) int{
+    log.Printf( "getEvictedContainer....")
+
+    threshold := getProb(nodeID, reqFuncType)
+
+    var probMap map[int]float64 
+
+    var probPV ProbPairVec
+
+    total_prob := float64(0)
+    
+    for funcType, _ := range functionInfoMap_G.funcMap{
+        prob := getProb(nodeID, funcType)
+        probMap[funcType] = prob
+        total_prob += prob
+    }
+
+    threshold = threshold/total_prob
+
+    for funcType, prob  := range probMap{
+        prob = prob/total_prob
+        probMap[funcType] = prob
+
+        var pp ProbPair
+        pp.funcType = funcType
+        pp.probability = prob
+
+        probPV.probPair_v = append(probPV.probPair_v, pp)
+
+    }
+
+    probPV.sortVec()
+
+    min := 1
+    max := 100
+    val := rand.Intn(max-min+1) + min
+    log.Printf( "random number is ", val)
+
+    accum_prob := float64(0)
+    log.Printf( "Threshold is ", threshold)
+
+    for _, pp := range probPV.probPair_v{
+        funcType := pp.funcType
+        probability := pp.probability
+
+        accum_prob += probability
+
+        if float64 (val) < accum_prob*100 {
+
+            log.Printf( "evict type ", funcType)
+            return funcType
+        }
+    }
+
+    log.Printf( "no need to evict ")
+    return 0
+    
+}
+
+
+//TODO: add some functions
 //create new containers
 func createToCurrent(requestPtr *Request, i int){
     // log.Debug( "start createToCurrent....")
 
-    requestPtr.Function.activePriority()//when use this request, update the priority first
+    // requestPtr.Function.activePriority()//when use this request, update the priority first
 
     succFlag := true
 
     var f Function
+
+    count := 0
     
     //if memory not sufficient and this request prioirty is higher than the cached one
     if requestPtr.Function.Size > topo_G.Nodes[requestPtr.Ingress.ID].Mem{
         //clear the cachesmap
-        for{
+        for count < 1000 {
 
-                p2 := cacheMap_G.getLowestPriority(requestPtr.Ingress.ID)
+                
 
-                if p2 < requestPtr.Function.Priority{
+                count++
 
-                    f, succFlag = cacheMap_G.deleteLowFunction(requestPtr.Ingress.ID)//delete the lower priority function
-                    if succFlag == true{
+                funcType := getEvictedContainer(requestPtr.Ingress.ID, requestPtr.Function.Type)
 
-                        //If success, terminate the container
-                        termContainers(f)
-
-                        updateTopo("add", requestPtr.Ingress.ID, f.Size)
-
-                    }
-                    if requestPtr.Function.Size <= topo_G.Nodes[requestPtr.Ingress.ID].Mem{
-                        // call knative to create new containers
-                        createContainers(requestPtr)
-
-                        //put it in the active list
-                        activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
-
-                        // functionfreq_G.add(requestPtr.Function.Type)
-                        updateTopo("minus", requestPtr.Ingress.ID, requestPtr.Function.Size)
-
-                        // requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
-
-                        return
-                    }
-                    
-                    //this means no more space to delete
-                    if succFlag == false {
-                        return
-                    }
-                }else{
+                if funcType == requestPtr.Function.Type || funcType == 0{
                     return
                 }
+
+                succFlag = cacheMap_G.deleteProb(requestPtr.Ingress.ID, funcType, topo_G)
+
+                functionSize := getContainerSize(funcType)
+
+
+                if succFlag == true{
+
+                    //If success, terminate the container
+                    termContainers(f)
+
+                    updateTopo("add", requestPtr.Ingress.ID, functionSize)
+
+                }
+                if requestPtr.Function.Size <= topo_G.Nodes[requestPtr.Ingress.ID].Mem{
+                    // call knative to create new containers, request is also updated here
+                    createContainers(requestPtr)
+
+                    //put it in the active list
+                    activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
+
+                    // functionfreq_G.add(requestPtr.Function.Type)
+                    updateTopo("minus", requestPtr.Ingress.ID, requestPtr.Function.Size)
+
+                    topo_G.addFreqAll(requestPtr.Function.Type)
+
+                    topo_G.setRecencyAll(requestPtr.Function.Type, float64(requestPtr.ArriveTime))
+
+
+
+                   
+
+                    return
+                }
+                
+                //this means no more space to delete
+                if succFlag == false {
+                    return
+                }
+               
            }
 
     }else{
@@ -134,8 +298,11 @@ func createToCurrent(requestPtr *Request, i int){
         // functionfreq_G.add(requestPtr.Function.Type)
         updateTopo("minus", requestPtr.Ingress.ID, requestPtr.Function.Size)
 
-        // requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
+        topo_G.addFreqAll(requestPtr.Function.Type)
 
+        topo_G.setRecencyAll(requestPtr.Function.Type, float64(requestPtr.ArriveTime))
+
+       
         return
     }
 }
@@ -315,7 +482,9 @@ func sendResult(r Request) error{
 
         log.Printf("sendResult: Unexpected HTTP status code", resp.Status)
 		return errors.New("sendResult: Unexpected HTTP status code" + resp.Status)
-	}
+	}else{
+        log.Printf("sendResult: 200 ok")
+    }
 
     // log.Debug("sendResult: finish....")
 	return nil
@@ -330,11 +499,12 @@ func sendResults(requests []Request) {
 //deploy all request
 func scheduleRequests(){
 
-
+    rand.Seed(time.Now().UnixNano())
 
     LoadConfig("./config/my-config.json")
 	loadTopo(config_G.TopoName)
 	initGlobal()
+    initFuncMap()
     //the factor to reduce the request amolunt is 10000
 	genReqZipf(config_G.RequestFile, config_G.ReduFactor)
 
@@ -397,8 +567,8 @@ func scheduleRequests(){
     activeFunctions_G.show()
     cacheMap_G.show()
 
-    activeFunctions_G.showPriority()
-    cacheMap_G.showPriority()
+    // activeFunctions_G.showPriority()
+    // cacheMap_G.showPriority()
 
     log.Printf("All algorithm finished............")
 

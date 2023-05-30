@@ -251,23 +251,163 @@ type Config struct {
 	SlotNum       int      `json:"SlotNum"`  //the time slot to run
 	ReduFactor    float64  `json:"ReduFactor"`  //factor to reduce the request num
 	Token         string   `json:"Token"`  //factor to reduce the request num
- }
+}
+
+
+type FunctionInfoMap struct{
+	funcMap map[int]Function
+}
+
+func (fim *FunctionInfoMap) add(funcType int, f Function ) {
+	fim.funcMap[funcType] = f
+}
+
+func (fim *FunctionInfoMap) get(funcType int)  (f Function, succFlag bool) {
+	f_r, ok := fim.funcMap[funcType]
+	if ok {
+		return f_r, true
+	}else{
+       var f_r Function
+	    return f_r, false
+	}
+}
+
+func (fim *FunctionInfoMap) getSize(funcType int)  float64{
+
+	f_r, ok := fim.funcMap[funcType]
+	if ok {
+	    return f_r.Size
+	}else{
+       
+	    return 0
+	}
+}
+
 
 type Topology struct {
 	Nodes []PhyNode
 }
 
+func (t *Topology) get(nodeID int)  PhyNode{
+    for _, node := range t.Nodes {
+        if node.ID == nodeID{
+			return node
+		}
+	}
+
+	var p PhyNode
+	p.ID = 0 //cannot find
+
+	return p
+}
+
+func (t *Topology) assignNode(nodeID int, p PhyNode) {
+    for index, node := range t.Nodes {
+        if node.ID == nodeID{
+			t.Nodes[index] = p
+		}
+	}
+}
+
+func (t *Topology) addFreqAll(funcType int){
+    for index, n := range t.Nodes{
+        n.addFreq(funcType)
+		t.Nodes[index] = n
+	}
+}
+
+func (t *Topology) setRecencyAll(funcType int, recen float64){
+    for index, n := range t.Nodes{
+        n.setRecency(funcType, recen)
+		t.Nodes[index] = n
+	}
+}
+
+func (t *Topology) minusFreq(nodeID int, funcType int){
+	p := t.get(nodeID)
+	(&p).minusFreq(funcType)
+
+	t.assignNode(nodeID, p)
+
+}
+
 type PhyNode struct {
-	ID     int
-	Lat    float64
-	Long   float64
-	Mem    float64 
+	ID       int
+	Lat      float64
+	Long     float64
+	Mem      float64 
+	cpuFreq  float64
+	FuncFreq map[int]float64  // <functype, freq>
+	Recency  map[int]float64  // <functype, time>
 }
 
 //caPhyNodeche method
 func (p *PhyNode) getMem() float64 {
     return p.Mem
 }
+
+func (p *PhyNode) getFreq(funcType int) float64 {
+    freq, ok := p.FuncFreq[funcType]
+	if ok {
+        if !(freq > 0){
+			p.FuncFreq[funcType] = 1
+			return 1
+		}
+
+		return freq
+	}else{
+	    p.FuncFreq[funcType] = 1
+		return 1
+	}
+}
+
+func (p *PhyNode) getRecency(funcType int) float64 {
+    recen, ok := p.Recency[funcType]
+	if ok {
+        if !(recen > 0){
+			p.Recency[funcType] = 1
+			return 1
+		}
+
+		return recen
+	}else{
+	    p.Recency[funcType] = 1
+		return 1
+	}
+}
+
+func (p *PhyNode) addFreq(funcType int){
+    p.FuncFreq[funcType] += 1
+}
+
+func (p *PhyNode) setRecency(funcType int, recen float64){
+    p.Recency[funcType] = recen
+}
+
+func (p *PhyNode) minusFreq(funcType int){
+	p.FuncFreq[funcType] -= 1
+}
+
+type ProbPair struct{
+	funcType    int
+	probability float64
+}
+
+
+type ProbPairVec struct{
+	probPair_v []ProbPair
+}
+
+func(ppv *ProbPairVec) sortVec(){
+	sort.SliceStable(ppv.probPair_v, func(i, j int) bool {
+		return ppv.probPair_v[i].probability < ppv.probPair_v[j].probability
+	})
+}
+
+func(ppv *ProbPairVec) push_back(pp ProbPair){
+	ppv.probPair_v = append(ppv.probPair_v,  pp)
+}
+
 
 type Cache struct {
 	PhyNodeID int //the phynodeID
@@ -319,6 +459,20 @@ func (c *Cache) delete(i int){
 	}
 	
 }
+
+func (c *Cache) removeType(funcType int) bool{
+      for index, f := range c.FunctionList{
+          if f.Type == funcType{
+			c.FunctionList = append(c.FunctionList[:index], c.FunctionList[index+1:]...)
+			return true
+		  }
+	  }
+
+	  return false
+
+}
+
+
 
 
 
@@ -442,6 +596,30 @@ func (cm *CacheMap) sort() {
 		c := cm.Caches[i]
 		(&c).sortList()
 	}
+}
+
+func (cm *CacheMap) deleteProb( nodeID int, funcType int, topo Topology) bool {
+	
+	c := cm.Caches[nodeID] 
+
+	if len(c.FunctionList) > 0{
+        if c.removeType(funcType) == false{
+			return false
+		}
+	
+    
+	    cm.Caches[nodeID] = c
+    
+	    topo.minusFreq(nodeID, funcType)
+
+		return true
+
+	}else{
+
+		return false
+	}
+
+	
 }
 
 //Active slice that record active functions on single node

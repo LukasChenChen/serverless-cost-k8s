@@ -480,8 +480,3 @@ func getRequestsMapSum() int{
     log.Printf("total Request [%d] \n", sum)
     return sum
 }
-
-//gen histogram from original file
-func genHistogram(fileName string) {
-
-}
