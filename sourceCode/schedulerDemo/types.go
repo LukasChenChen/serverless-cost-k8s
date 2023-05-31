@@ -251,6 +251,8 @@ type Config struct {
 	SlotNum       int      `json:"SlotNum"`  //the time slot to run
 	ReduFactor    float64  `json:"ReduFactor"`  //factor to reduce the request num
 	Token         string   `json:"Token"`  //factor to reduce the request num
+	Alpha         float64  `json:"Alpha"`
+	CommCostPara  float64  `json:"CommCostPara"`
 }
 
 

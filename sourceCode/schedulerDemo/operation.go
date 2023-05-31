@@ -10,12 +10,35 @@ import(
     "math"
     "errors"
     "sort"
-	// "reflect"
     "encoding/json"
     "io/ioutil"
-    // "github.com/openacid/low/mathext/zipf"
+    
 )
 
+var m_cold_req_num_G float64
+var m_served_req_num_G float64
+var m_total_req_num_G float64
+
+var total_commCost_G   float64
+var total_runCost_G    float64
+var total_instanCost_G float64
+var total_avgCost_G    float64
+
+func initResult(){
+    m_cold_req_num_G = 0.0
+
+    m_served_req_num_G = 0.0
+
+    m_total_req_num_G = 0.0
+
+    total_commCost_G = 0.0
+
+    total_runCost_G = 0.0
+
+    total_instanCost_G = 0.0
+
+    total_avgCost_G = 0.0
+}
 
 
 //Load the end points of k8s
@@ -479,4 +502,149 @@ func getRequestsMapSum() int{
 	}
     log.Printf("total Request [%d] \n", sum)
     return sum
+}
+
+func getRunCost(nodeID int, funcType int) float64{
+
+    cpuFreq := getCPU(nodeID)
+
+    size := getContainerSize(funcType)
+
+    runCost := float64(size)*cpuFreq*config_G.Alpha
+
+    return runCost
+
+}
+
+// func getInstanCost(nodeID int, funcType int) float64{
+//     cpuFreq := getCPU(nodeID)
+
+//     size := getContainerSize(funcType)
+
+
+//     instanCost := float65(size)/float64(cpuFreq)
+
+//     return instanCost
+// }
+
+//calculate result for each request
+func calcResult(requestPtr *Request)(bool, []string){
+    var result []string
+
+    singleCost := float64(0)
+   
+
+    
+    runCost    := float64(0)
+    commCost   := float64(0)
+    
+   
+
+    if requestPtr.Served == false{
+        return false, result
+    }else{
+        m_served_req_num_G += 1
+    }
+    
+    result = append(result, fmt.Sprintf("%.2f", float64(requestPtr.ID)))
+    
+    result = append(result, fmt.Sprintf("%.2f", float64(requestPtr.Function.Type)))
+
+    dist := distance(requestPtr.Ingress, requestPtr.DeployNode, "K")
+
+    commCost = dist * config_G.CommCostPara
+
+    total_commCost_G += commCost
+
+    singleCost += commCost
+
+    result = append(result, fmt.Sprintf("%.2f", commCost))
+
+    runCost = getRunCost(requestPtr.DeployNode.ID, requestPtr.Function.Type)
+
+    total_runCost_G += runCost
+
+    singleCost += runCost
+
+    result = append(result, fmt.Sprintf("%.2f", runCost))
+
+    if requestPtr.IsColdStart == true {
+
+        m_cold_req_num_G += 1
+
+        instanCost := getInstanCost(requestPtr.DeployNode.ID, requestPtr.Function.Type)
+
+        singleCost += instanCost
+
+        total_instanCost_G += instanCost
+        
+        result = append(result, fmt.Sprintf("%.2f", instanCost))
+
+        result = append(result, fmt.Sprintf("%.2f", 1.0))
+
+    }else{
+        result = append(result, fmt.Sprintf("%.2f", 0.0))
+        result = append(result, fmt.Sprintf("%.2f", 0.0))
+    }
+    
+    result = append(result, fmt.Sprintf("%.2f", singleCost))
+
+    total_avgCost_G += singleCost
+
+    return true, result
+
+}
+
+
+func printResult(){
+
+    csvFile, err := os.Create("result.csv")
+
+    csvwriter := csv.NewWriter(csvFile)
+
+    
+
+    if err != nil{
+        log.Printf("Failed creating file")
+    }
+
+    for i := 0; i < config_G.SlotNum; i++{
+        requests, found := requestsMap_G.get(i)
+
+        if found == false{
+            log.Printf("cannot find time slot %d", i)
+            break
+        }
+
+        for i := 0; i < len(requests); i++{
+
+            m_served_req_num_G += 1
+
+            requestPtr := &(requests[i])
+
+            succFlag, result := calcResult(requestPtr)
+            if succFlag == true {
+                csvwriter.Write(result)
+            }
+            
+        }
+    
+    }
+
+    var numbers []string
+
+    numbers = append(numbers, fmt.Sprintf("%.2f",m_cold_req_num_G))
+    numbers = append(numbers, fmt.Sprintf("%.2f", m_served_req_num_G))
+    numbers = append(numbers, fmt.Sprintf("%.2f",m_total_req_num_G))
+    coldstartfreq := float64(m_cold_req_num_G)/float64(m_served_req_num_G)
+    numbers = append(numbers, fmt.Sprintf("%.2f", coldstartfreq))
+    numbers = append(numbers, fmt.Sprintf("%.2f", total_commCost_G/float64(m_served_req_num_G)))
+    numbers = append(numbers, fmt.Sprintf("%.2f",total_instanCost_G/float64(m_served_req_num_G)))
+    numbers = append(numbers, fmt.Sprintf("%.2f", (total_instanCost_G+total_commCost_G)/float64(m_served_req_num_G)))
+    numbers = append(numbers, fmt.Sprintf("%.2f", total_runCost_G/float64(m_served_req_num_G)))
+
+    numbers = append(numbers, fmt.Sprintf("%.2f", total_avgCost_G/float64(m_served_req_num_G)))
+
+
+    csvFile.Close()
 }
