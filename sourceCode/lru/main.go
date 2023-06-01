@@ -64,13 +64,20 @@ func main() {
     }
     defer file.Close()
 
+
+
 	LoadConfig("./config/my-config.json")
+
+    doneChan := make(chan struct{})
+    var wg sync.WaitGroup
+
+	if config_G.Testbed == 1{
 
 	log.Printf("Starting custom scheduler...")
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
-	doneChan := make(chan struct{})
-	var wg sync.WaitGroup
+	
+	
 
 	wg.Add(1)
 	go monitorUnscheduledPods(doneChan, &wg)
@@ -81,23 +88,27 @@ func main() {
 	go reconcileUnscheduledPods(50, doneChan, &wg)
 	log.Printf("reconcileUnscheduledPods finish")
 
+	}
+
 	
 	scheduleRequests()
 
 	
-
-
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
-	for {
-		select {
-		case <-signalChan:
-			log.Printf("Shutdown signal received, exiting...")
-			close(doneChan)
-			wg.Wait()
-			os.Exit(0)
-		}
-	}
+    if config_G.Testbed == 1{
+	    
+	    signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	    for {
+		    select {
+		        case <-signalChan:
+			    log.Printf("Shutdown signal received, exiting...")
+			    close(doneChan)
+			    wg.Wait()
+			    os.Exit(0)
+		    }
+	    }
+
+    }
     
 	file.Close()
 }

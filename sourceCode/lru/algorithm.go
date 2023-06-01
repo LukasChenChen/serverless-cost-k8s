@@ -100,9 +100,13 @@ func createToCurrent(requestPtr *Request, i int){
             f, succFlag = cacheMap_G.deleteLeastUse(requestPtr.Ingress.ID)//delete the lower priority function
 
             if succFlag == true{
+                
+                if config_G.Testbed == 1{
 
-                //If success, terminate the container
-                termContainers(f)
+                    //If success, terminate the container
+                    termContainers(f)
+
+                }
 
                 updateTopo("add", requestPtr.Ingress.ID, f.Size)
 
@@ -111,8 +115,15 @@ func createToCurrent(requestPtr *Request, i int){
 
                 requestPtr.Function.lastUseTime = requestPtr.ArriveTime
 
+                if config_G.Testbed == 1{
+
                 // call knative to create new containers
-                createContainers(requestPtr)
+                    createContainers(requestPtr)
+                }
+
+                requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+                requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
                 //put it in the active list
                 activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -134,7 +145,14 @@ func createToCurrent(requestPtr *Request, i int){
     }else{
         requestPtr.Function.lastUseTime = requestPtr.ArriveTime
 
-        createContainers(requestPtr)
+        if config_G.Testbed == 1{
+
+            createContainers(requestPtr)
+        }
+
+        requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+        requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
         //put it in the active list
         activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -205,11 +223,11 @@ func createContainers(requestPtr *Request){
 
     count_G = count_G + 1
 
-    requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+    // requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
 
 	service, err := createService(requestPtr.Function)
 
-    requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
+    // requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
 	if err != nil {
 		log.Printf("fail to createContainers")
@@ -281,6 +299,54 @@ func deployRequest(requestPtr *Request){
 
 }
 
+func getCPU(nodeID int) float64{
+    p := topo_G.get(nodeID)
+    if p.ID == -1 {
+        log.Printf( "cannot find the node ....", nodeID)
+        return -1
+    }else{
+        if p.cpuFreq == 0{
+            log.Printf( "node %d cpuFreq is 0", nodeID)
+        }
+        return p.cpuFreq
+    }
+
+}
+
+func getContainerSize(funcType int) float64{
+
+    switch funcType {
+    case 1:
+        f := container_1
+        return f.Size
+    case 2:
+        f := container_2
+        return f.Size
+    case 3:
+        f := container_3
+        return f.Size
+    case 4:
+        f := container_4
+        return f.Size
+    }
+    log.Printf( "funcType %d size is 0", funcType)
+    return 0
+}
+
+func getInstanCost(nodeID int, funcType int) float64{
+    cpuFreq := getCPU(nodeID)
+    size := getContainerSize(funcType)
+    instanCost := float64(size/cpuFreq)
+
+    if cpuFreq == 0 {
+        log.Printf( "cpuFreq is 0....")
+        return 0
+    }
+    
+    return instanCost
+}
+
+
 //deploy request of one time interval
 func deployRequests(requests []Request){
 
@@ -290,6 +356,7 @@ func deployRequests(requests []Request){
 
         deployRequest(requestPtr)
     }
+   
 }
 
 //request finished, send it using json
@@ -383,19 +450,23 @@ func scheduleRequests(){
     
         deployRequests(requests)
 
+
+
         // startSchedule()
 
-        
+        if config_G.Testbed == 1{
         //invoke sending http request
-        sendResults(requests)
+            sendResults(requests)
+        }
 
         updateCache()
 
         log.Println("result node id", requests[0].Function.PhyNode.ID)
-
-        //wait for the container up
-        time.Sleep(60 * time.Second)
-        log.Printf("wait 60 seconds .....")
+        if config_G.Testbed == 1{
+            //wait for the container up
+            time.Sleep(60 * time.Second)
+            log.Printf("wait 60 seconds .....")
+        }
     }
 
     getRequestsMapSum()
@@ -409,6 +480,9 @@ func scheduleRequests(){
 
     activeFunctions_G.showPriority()
     cacheMap_G.showPriority()
+
+    printConfig("result-lru.csv")
+    printResult("result-lru.csv")
 
     log.Printf("All algorithm finished............")
 

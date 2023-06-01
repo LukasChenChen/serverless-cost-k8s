@@ -252,23 +252,129 @@ type Config struct {
 	SlotNum       int      `json:"SlotNum"`  //the time slot to run
 	ReduFactor    float64  `json:"ReduFactor"`  //factor to reduce the request num
 	Token         string   `json:"Token"`  //token get from k8s
+	Alpha         float64  `json:"Alpha"`
+	CommCostPara  float64  `json:"CommCostPara"`
+	Testbed       int      `json:"Testbed"`
+	CpuFreq       float64  `json:"CpuFreq"`
  }
+
+type FunctionInfoMap struct{
+	funcMap map[int]Function
+}
+
+func (fim *FunctionInfoMap) add(funcType int, f Function ) {
+    if fim.funcMap == nil{
+		fim.funcMap = map[int]Function{}
+	}
+
+	fim.funcMap[funcType] = f
+}
+
+func (fim *FunctionInfoMap) get(funcType int)  (f Function, succFlag bool) {
+	f_r, ok := fim.funcMap[funcType]
+	if ok {
+		return f_r, true
+	}else{
+       var f_r Function
+	    return f_r, false
+	}
+}
+
+func (fim *FunctionInfoMap) getSize(funcType int)  float64{
+
+	f_r, ok := fim.funcMap[funcType]
+	if ok {
+	    return f_r.Size
+	}else{
+       
+	    return 0
+	}
+}
+
 
 type Topology struct {
 	Nodes []PhyNode
 }
 
+func (t *Topology) get(nodeID int)  PhyNode{
+    for _, node := range t.Nodes {
+        if node.ID == nodeID{
+			return node
+		}
+	}
+
+	var p PhyNode
+	p.ID = 0 //cannot find
+
+	return p
+}
+
+func (t *Topology) assignNode(nodeID int, p PhyNode) {
+    for index, node := range t.Nodes {
+        if node.ID == nodeID{
+			t.Nodes[index] = p
+		}
+	}
+}
+
+func (t *Topology) addFreqAll(funcType int){
+    for index, n := range t.Nodes{
+        n.addFreq(funcType)
+		t.Nodes[index] = n
+	}
+}
+
+func (t *Topology) setRecencyAll(funcType int, recen float64){
+    for index, n := range t.Nodes{
+        n.setRecency(funcType, recen)
+		t.Nodes[index] = n
+	}
+}
+
+func (t *Topology) minusFreq(nodeID int, funcType int){
+	p := t.get(nodeID)
+	(&p).minusFreq(funcType)
+
+	t.assignNode(nodeID, p)
+
+}
+
 type PhyNode struct {
-	ID     int
-	Lat    float64
-	Long   float64
-	Mem    float64 
+	ID       int
+	Lat      float64
+	Long     float64
+	Mem      float64 
+	cpuFreq  float64
+	FuncFreq map[int]float64  // <functype, freq>
+	Recency  map[int]float64  // <functype, time>
 }
 
 //caPhyNodeche method
 func (p *PhyNode) getMem() float64 {
     return p.Mem
 }
+
+func (p *PhyNode) addFreq(funcType int){
+	if p.FuncFreq == nil{
+		p.FuncFreq = map[int]float64{}
+	}
+    p.FuncFreq[funcType] += 1
+}
+
+func (p *PhyNode) setRecency(funcType int, recen float64){
+
+	if p.Recency == nil{
+		p.Recency = map[int]float64{}
+	}
+    p.Recency[funcType] = recen
+}
+
+
+func (p *PhyNode) minusFreq(funcType int){
+	p.FuncFreq[funcType] -= 1
+}
+
+
 
 type Cache struct {
 	PhyNodeID int //the phynodeID

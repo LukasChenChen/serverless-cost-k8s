@@ -10,13 +10,35 @@ import(
     "math"
     "errors"
     "sort"
-	// "reflect"
     "encoding/json"
     "io/ioutil"
-    // "github.com/openacid/low/mathext/zipf"
+    "time"
 )
 
+var m_cold_req_num_G float64
+var m_served_req_num_G float64
+var m_total_req_num_G float64
 
+var total_commCost_G   float64
+var total_runCost_G    float64
+var total_instanCost_G float64
+var total_avgCost_G    float64
+
+func initResult(){
+    m_cold_req_num_G = 0.0
+
+    m_served_req_num_G = 0.0
+
+    m_total_req_num_G = 0.0
+
+    total_commCost_G = 0.0
+
+    total_runCost_G = 0.0
+
+    total_instanCost_G = 0.0
+
+    total_avgCost_G = 0.0
+}
 
 //Load the end points of k8s
 func LoadEndPoints(fileName string){
@@ -69,6 +91,10 @@ func LoadConfig(fileName string){
     log.Println(config_G.SlotNum)
     log.Println(config_G.ReduFactor)
     log.Println(config_G.Token)
+    log.Println(config_G.Alpha)
+    log.Println(config_G.CommCostPara)
+    log.Println(config_G.Testbed)
+    log.Println("cpuFreq %f", config_G.CpuFreq)
 
     jsonFile.Close()
 }
@@ -281,6 +307,7 @@ func loadTopo(topoFile string){
 		phynode.Lat, err= strconv.ParseFloat(rec[1], 64)
 		phynode.Long, err= strconv.ParseFloat(rec[2], 64)
         phynode.Mem = config_G.MemCap
+        phynode.cpuFreq = config_G.CpuFreq
 		topo_G.Nodes = append(topo_G.Nodes, phynode)
 
     }
@@ -481,7 +508,195 @@ func getRequestsMapSum() int{
     return sum
 }
 
-//gen histogram from original file
-func genHistogram(fileName string) {
 
+func getRunCost(nodeID int, funcType int) float64{
+
+    cpuFreq := getCPU(nodeID)
+
+    size := getContainerSize(funcType)
+
+    runCost := float64(size)*cpuFreq*config_G.Alpha
+
+    return runCost
+
+}
+
+//calculate result for each request
+func calcResult(requestPtr *Request)(bool, []string){
+    var result []string
+
+    singleCost := float64(0)
+   
+    runCost    := float64(0)
+    commCost   := float64(0)
+    
+   
+
+    if requestPtr.Served == false{
+        return false, result
+    }else{
+        m_served_req_num_G += 1
+    }
+    
+    result = append(result, fmt.Sprintf("%.2f", float64(requestPtr.ID)))
+    
+    result = append(result, fmt.Sprintf("%.2f", float64(requestPtr.Function.Type)))
+
+    dist := distance(requestPtr.Ingress, requestPtr.DeployNode, "K")
+
+    commCost = dist * config_G.CommCostPara
+
+    total_commCost_G += commCost
+
+    singleCost += commCost
+
+    result = append(result, fmt.Sprintf("%.2f", commCost))
+
+    runCost = getRunCost(requestPtr.DeployNode.ID, requestPtr.Function.Type)
+
+    total_runCost_G += runCost
+
+    singleCost += runCost
+
+    result = append(result, fmt.Sprintf("%.2f", runCost))
+
+    if requestPtr.IsColdStart == true {
+
+        m_cold_req_num_G += 1
+
+        instanCost := getInstanCost(requestPtr.DeployNode.ID, requestPtr.Function.Type)
+
+        singleCost += instanCost
+
+        total_instanCost_G += instanCost
+        
+        result = append(result, fmt.Sprintf("%.2f", instanCost))
+
+        result = append(result, fmt.Sprintf("%.2f", 1.0))
+
+    }else{
+        result = append(result, fmt.Sprintf("%.2f", 0.0))
+        result = append(result, fmt.Sprintf("%.2f", 0.0))
+    }
+    
+    result = append(result, fmt.Sprintf("%.2f", singleCost))
+
+    total_avgCost_G += singleCost
+
+    return true, result
+
+}
+
+
+func printResult(filename string){
+
+    initResult()
+
+    title := []string{"ID","funcType","commCost","runCost","instanCost","iscold","singlecost"}
+
+    // csvFile, err := os.Create(filename)
+
+    csvFile, err := os.OpenFile(filename, os.O_RDWR|os.O_APPEND, 0660)
+
+    if err != nil{
+        log.Printf( "cannot open result file")
+    }
+
+    csvwriter := csv.NewWriter(csvFile)
+
+    csvwriter.Write(title)
+    csvwriter.Flush()
+
+    if err != nil{
+        log.Printf("Failed creating file", err)
+    }
+
+    for i := 0; i < config_G.SlotNum; i++{
+        requests, found := requestsMap_G.get(i)
+
+        if found == false{
+            log.Printf("cannot find time slot %d", i)
+            break
+        }
+
+        for j := 0; j < len(requests); j++{
+
+            m_total_req_num_G += 1
+
+            requestPtr := &(requests[j])
+
+            succFlag, result := calcResult(requestPtr)
+            if succFlag == true {
+                // log.Printf("about to write in file")
+                csvwriter.Write(result)
+                csvwriter.Flush()
+            }
+            
+        }
+    
+    }
+
+    finaltitle := []string{"coldnum","servednum","totalnum","coldfreq","commcost","instancost","latencycost","runcost","avgcost"}
+    csvwriter.Write(finaltitle)
+    csvwriter.Flush()
+
+    var numbers []string
+
+    numbers = append(numbers, fmt.Sprintf("%.2f",m_cold_req_num_G))
+    numbers = append(numbers, fmt.Sprintf("%.2f", m_served_req_num_G))
+    numbers = append(numbers, fmt.Sprintf("%.2f",m_total_req_num_G))
+    coldstartfreq := float64(m_cold_req_num_G)/float64(m_served_req_num_G)
+    numbers = append(numbers, fmt.Sprintf("%.2f", coldstartfreq))
+    numbers = append(numbers, fmt.Sprintf("%.2f", total_commCost_G/float64(m_served_req_num_G)))
+    numbers = append(numbers, fmt.Sprintf("%.2f",total_instanCost_G/float64(m_served_req_num_G)))
+    numbers = append(numbers, fmt.Sprintf("%.2f", (total_instanCost_G+total_commCost_G)/float64(m_served_req_num_G)))
+    numbers = append(numbers, fmt.Sprintf("%.2f", total_runCost_G/float64(m_served_req_num_G)))
+
+    numbers = append(numbers, fmt.Sprintf("%.2f", total_avgCost_G/float64(m_served_req_num_G)))
+
+    csvwriter.Write(numbers)
+    csvwriter.Flush()
+
+
+    csvFile.Close()
+}
+
+func printConfig(filename string){
+
+    header := [][]string{
+        {" ", " "},
+        {"Time", time.Now().String()},
+        {"Toponame", config_G.TopoName}, 
+        {"RequestFile", config_G.RequestFile}, 
+        {"MemCap", fmt.Sprintf("%.3f", config_G.MemCap)}, 
+        {"NodeNum", strconv.Itoa(config_G.NodeNum)}, 
+        {"Beta", fmt.Sprintf("%.3f", config_G.Beta)}, 
+        {"SlotNum", strconv.Itoa(config_G.SlotNum)}, 
+        {"ReduFactor", fmt.Sprintf("%.3f", config_G.ReduFactor)}, 
+        {"Token", config_G.Token}, 
+        {"Alpha", fmt.Sprintf("%.3f", config_G.Alpha)}, 
+        {"CommCostPara", fmt.Sprintf("%.3f", config_G.CommCostPara)}, 
+        {"Testbed", strconv.Itoa(config_G.Testbed)}, 
+        {"CpuFreq", fmt.Sprintf("%.3f",config_G.CpuFreq)}, 
+        {" ", " "},
+    }
+
+    // csvFile, _ := os.Create(filename, "a")
+
+    csvFile, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0660)
+
+    if err != nil{
+        log.Printf( "cannot open result file")
+    }
+
+    csvwriter := csv.NewWriter(csvFile)
+
+    for _, row := range header {
+        _ = csvwriter.Write(row)
+    }
+
+    csvwriter.Flush()
+
+    csvFile.Close()
+    
 }
