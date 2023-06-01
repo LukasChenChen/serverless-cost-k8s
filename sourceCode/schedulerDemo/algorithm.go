@@ -94,16 +94,19 @@ func getContainerSize(funcType int) float64{
         f := container_4
         return f.Size
     }
-    
+    log.Printf( "funcType %d size is 0", funcType)
     return 0
 }
 
 func getCPU(nodeID int) float64{
     p := topo_G.get(nodeID)
-    if p.ID == 0 {
+    if p.ID == -1 {
         log.Printf( "cannot find the node ....", nodeID)
-        return 0
+        return -1
     }else{
+        if p.cpuFreq == 0{
+            log.Printf( "node %d cpuFreq is 0", nodeID)
+        }
         return p.cpuFreq
     }
 
@@ -114,10 +117,11 @@ func getInstanCost(nodeID int, funcType int) float64{
     size := getContainerSize(funcType)
     instanCost := float64(size/cpuFreq)
 
-    if cpuFreq == 0 || instanCost ==0{
+    if cpuFreq == 0 {
+        log.Printf( "cpuFreq is 0....")
         return 0
     }
-    log.Printf( "getInstanCost is 0....")
+    
     return instanCost
 }
 
@@ -149,6 +153,8 @@ func getProb(nodeID int, funcType int) float64{
 }
 
 func initFuncMap(){
+    
+
     functionInfoMap_G.add(1, container_1)
 
     functionInfoMap_G.add(2, container_2)
@@ -165,7 +171,7 @@ func getEvictedContainer(nodeID int, reqFuncType int ) int{
 
     threshold := getProb(nodeID, reqFuncType)
 
-    var probMap map[int]float64 
+    probMap := map[int]float64{}
 
     var probPV ProbPairVec
 
@@ -196,10 +202,10 @@ func getEvictedContainer(nodeID int, reqFuncType int ) int{
     min := 1
     max := 100
     val := rand.Intn(max-min+1) + min
-    log.Printf( "random number is ", val)
+    log.Printf( "random number is %d", val)
 
     accum_prob := float64(0)
-    log.Printf( "Threshold is ", threshold)
+    log.Printf( "Threshold is %.2f", threshold)
 
     for _, pp := range probPV.probPair_v{
         funcType := pp.funcType
@@ -209,7 +215,7 @@ func getEvictedContainer(nodeID int, reqFuncType int ) int{
 
         if float64 (val) < accum_prob*100 {
 
-            log.Printf( "evict type ", funcType)
+            log.Printf( "evict type %d", funcType)
             return funcType
         }
     }
@@ -238,8 +244,6 @@ func createToCurrent(requestPtr *Request, i int){
         //clear the cachesmap
         for count < 1000 {
 
-                
-
                 count++
 
                 funcType := getEvictedContainer(requestPtr.Ingress.ID, requestPtr.Function.Type)
@@ -254,16 +258,24 @@ func createToCurrent(requestPtr *Request, i int){
 
 
                 if succFlag == true{
-
-                    //If success, terminate the container
-                    termContainers(f)
+                    if config_G.Testbed == 1{
+                        //If success, terminate the container
+                        termContainers(f)
+                    }
 
                     updateTopo("add", requestPtr.Ingress.ID, functionSize)
 
                 }
                 if requestPtr.Function.Size <= topo_G.Nodes[requestPtr.Ingress.ID].Mem{
-                    // call knative to create new containers, request is also updated here
-                    createContainers(requestPtr)
+
+                    if config_G.Testbed == 1{
+                        // call knative to create new containers, request is also updated here
+                        createContainers(requestPtr)
+                    }
+
+                    requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+                    requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
                     //put it in the active list
                     activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -274,10 +286,6 @@ func createToCurrent(requestPtr *Request, i int){
                     topo_G.addFreqAll(requestPtr.Function.Type)
 
                     topo_G.setRecencyAll(requestPtr.Function.Type, float64(requestPtr.ArriveTime))
-
-
-
-                   
 
                     return
                 }
@@ -290,7 +298,14 @@ func createToCurrent(requestPtr *Request, i int){
            }
 
     }else{
-        createContainers(requestPtr)
+
+        if config_G.Testbed == 1{
+            createContainers(requestPtr)
+        }
+
+        requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+        requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
         //put it in the active list
         activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -362,11 +377,9 @@ func createContainers(requestPtr *Request){
 
     count_G = count_G + 1
 
-    requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
 
 	service, err := createService(requestPtr.Function)
 
-    requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
 	if err != nil {
 		log.Printf("fail to createContainers")
@@ -439,7 +452,7 @@ func deployRequest(requestPtr *Request){
 }
 
 //deploy request of one time interval
-func deployRequests(requests []Request){
+func deployRequests(timeslot int,requests []Request){
 
     for i := 0; i < len(requests); i++{
 
@@ -447,6 +460,8 @@ func deployRequests(requests []Request){
 
         deployRequest(requestPtr)
     }
+
+    requestsMap_G.assign(timeslot, requests)
 }
 
 //request finished, send it using json
@@ -541,21 +556,25 @@ func scheduleRequests(){
             break
         }
     
-        deployRequests(requests)
+        deployRequests(i, requests)
 
-        // startSchedule()
 
-        
-        //invoke sending http request
-        sendResults(requests)
+       
+
+        if config_G.Testbed == 1{
+            //invoke sending http request
+            sendResults(requests)
+        }
 
         updateCache()
 
         log.Println("result node id", requests[0].Function.PhyNode.ID)
+        if config_G.Testbed == 1{
 
-        //wait for the container up
-        time.Sleep(60 * time.Second)
-        log.Printf("wait 60 seconds .....")
+            //wait for the container up
+            time.Sleep(60 * time.Second)
+            log.Printf("wait 60 seconds .....")
+        }
     }
 
     getRequestsMapSum()

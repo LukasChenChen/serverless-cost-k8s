@@ -253,6 +253,8 @@ type Config struct {
 	Token         string   `json:"Token"`  //factor to reduce the request num
 	Alpha         float64  `json:"Alpha"`
 	CommCostPara  float64  `json:"CommCostPara"`
+	Testbed       int      `json:"Testbed"`
+	CpuFreq       float64  `json:"CpuFreq"`
 }
 
 
@@ -261,6 +263,10 @@ type FunctionInfoMap struct{
 }
 
 func (fim *FunctionInfoMap) add(funcType int, f Function ) {
+    if fim.funcMap == nil{
+		fim.funcMap = map[int]Function{}
+	}
+
 	fim.funcMap[funcType] = f
 }
 
@@ -379,10 +385,17 @@ func (p *PhyNode) getRecency(funcType int) float64 {
 }
 
 func (p *PhyNode) addFreq(funcType int){
+	if p.FuncFreq == nil{
+		p.FuncFreq = map[int]float64{}
+	}
     p.FuncFreq[funcType] += 1
 }
 
 func (p *PhyNode) setRecency(funcType int, recen float64){
+
+	if p.Recency == nil{
+		p.Recency = map[int]float64{}
+	}
     p.Recency[funcType] = recen
 }
 
@@ -899,5 +912,26 @@ func (rm *RequestsMap) get(timeSlot int) ([]Request, bool) {
 	}else{
 		return r,false
 	}
+
+}
+
+func (rm *RequestsMap) assign(timeSlot int, requests []Request)  bool {
+
+	_, ok := rm.Map[timeSlot]
+
+	if ok {
+		var rs Requests 
+		rs.Requests = requests
+		rm.Map[timeSlot] = rs
+		return true
+	}else{
+		rm.Map = make(map[int]Requests)
+
+		var rs Requests 
+		rs.Requests = requests
+		rm.Map[timeSlot] = rs
+		return false
+	}
+
 
 }

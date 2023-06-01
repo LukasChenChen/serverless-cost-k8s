@@ -66,38 +66,46 @@ func main() {
 
 	LoadConfig("./config/my-config.json")
 
-	log.Printf("Starting custom scheduler...")
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-
 	doneChan := make(chan struct{})
+
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go monitorUnscheduledPods(doneChan, &wg)
-	log.Printf("monitorUnscheduledPods finish")
+	if config_G.Testbed == 1{
+
+	    log.Printf("Starting custom scheduler...")
+	    http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
+	    wg.Add(1)
+	    go monitorUnscheduledPods(doneChan, &wg)
+	    log.Printf("monitorUnscheduledPods finish")
 
 
-	wg.Add(1)
-	go reconcileUnscheduledPods(50, doneChan, &wg)
-	log.Printf("reconcileUnscheduledPods finish")
+	    wg.Add(1)
+	    go reconcileUnscheduledPods(50, doneChan, &wg)
+	    log.Printf("reconcileUnscheduledPods finish")
+	}
 
 	
 	scheduleRequests()
+    printConfig("result.csv")
+	printResult("result.csv")
+    
 
 	
 
-
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
-	for {
-		select {
-		case <-signalChan:
-			log.Printf("Shutdown signal received, exiting...")
-			close(doneChan)
-			wg.Wait()
-			os.Exit(0)
-		}
-	}
+    if config_G.Testbed == 1{
+	    signalChan := make(chan os.Signal, 1)
+	    signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	    for {
+		    select {
+		    case <-signalChan:
+			    log.Printf("Shutdown signal received, exiting...")
+			    close(doneChan)
+			    wg.Wait()
+			    os.Exit(0)
+		    }
+	    }
+    }
     
 	file.Close()
 }
