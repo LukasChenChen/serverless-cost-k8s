@@ -523,16 +523,6 @@ func getRunCost(nodeID int, funcType int) float64{
 
 }
 
-// func getInstanCost(nodeID int, funcType int) float64{
-//     cpuFreq := getCPU(nodeID)
-
-//     size := getContainerSize(funcType)
-
-
-//     instanCost := float65(size)/float64(cpuFreq)
-
-//     return instanCost
-// }
 
 //calculate result for each request
 func calcResult(requestPtr *Request)(bool, []string){

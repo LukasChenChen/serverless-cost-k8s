@@ -9,7 +9,7 @@
     "SlotNum": 30,
     "ReduFactor": 10000,
     "Token": "local",
-    "Alpha": 0.05,
+    "Alpha": 0.01,
     "CommCostPara": 1,
     "Testbed": 0,
     "CpuFreq": 3.0

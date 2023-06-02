@@ -69,16 +69,24 @@ func placeToCurrent(requestPtr *Request, Function Function, i int){
 
                     f, succFlag := cacheMap_G.deleteLowFunction(requestPtr.Ingress.ID)//delete the lower priority function
                     if succFlag == true{
-
+                        if config_G.Testbed == 1{
                         //If success, terminate the container
                         termContainers(f)
+                        }
 
                         updateTopo("add", requestPtr.Ingress.ID, f.Size)
 
                     }
                     if requestPtr.Function.Size <= topo_G.Nodes[requestPtr.Ingress.ID].Mem{
-                        // call knative to create new containers
-                        createContainers(requestPtr)
+
+                        if config_G.Testbed == 1{
+                            // call knative to create new containers
+                            createContainers(requestPtr)
+                        }
+
+                        requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+                        requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
                         //put it in the active list
                         activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -101,7 +109,14 @@ func placeToCurrent(requestPtr *Request, Function Function, i int){
            }
 
     }else{
-        createContainers(requestPtr)
+
+        if config_G.Testbed == 1{
+            createContainers(requestPtr)
+        }
+            requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+            requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
+        
 
         //put it in the active list
         activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -131,7 +146,16 @@ func updateTopo(operator string, phyNodeID int, mem float64){
 func createToCurrent(requestPtr *Request, i int){
     // log.Debug( "start createToCurrent...."
 
-    createContainers(requestPtr)
+    if config_G.Testbed == 1{
+
+        createContainers(requestPtr)
+    }
+
+        requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+
+        requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
+
+    
 
     //put it in the active list
     activeFunctions_G.add(requestPtr.Function, requestPtr.Ingress.ID)
@@ -197,11 +221,11 @@ func createContainers(requestPtr *Request){
 
     count_G = count_G + 1
 
-    requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
+    // requestPtr.Function.init(requestPtr.Ingress) // create new request only one case, on the current node
 
 	service, err := createService(requestPtr.Function)
 
-    requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
+    // requestPtr.update(requestPtr.Function, requestPtr.Ingress, true)
 
 	if err != nil {
 		log.Printf("fail to createContainers")
@@ -215,7 +239,7 @@ func createContainers(requestPtr *Request){
 //remove from active list, remove from cache, update memory size
 func termContainers(f Function) error{
     // log.Debug("Starting termContainers......")
-
+ 
     err := deleteService(f)
 
     // functionfreq_G.add(requestPtr.Function.Type)
@@ -240,7 +264,9 @@ func updateCache(){
             cache.FunctionList[i].minusLife()
             if cache.FunctionList[i].LifeTime < 1{
                 cacheMap_G.delete(phyNodeID, i)
+                if config_G.Testbed == 1{
                 termContainers(cache.FunctionList[i])
+                }
                 i = i - 1
             }
 
@@ -291,6 +317,54 @@ func deployRequest(requestPtr *Request){
     }
 
 }
+
+func getContainerSize(funcType int) float64{
+
+    switch funcType {
+    case 1:
+        f := container_1
+        return f.Size
+    case 2:
+        f := container_2
+        return f.Size
+    case 3:
+        f := container_3
+        return f.Size
+    case 4:
+        f := container_4
+        return f.Size
+    }
+    log.Printf( "funcType %d size is 0", funcType)
+    return 0
+}
+
+func getCPU(nodeID int) float64{
+    p := topo_G.get(nodeID)
+    if p.ID == -1 {
+        log.Printf( "cannot find the node ....", nodeID)
+        return -1
+    }else{
+        if p.cpuFreq == 0{
+            log.Printf( "node %d cpuFreq is 0", nodeID)
+        }
+        return p.cpuFreq
+    }
+
+}
+
+func getInstanCost(nodeID int, funcType int) float64{
+    cpuFreq := getCPU(nodeID)
+    size := getContainerSize(funcType)
+    instanCost := float64(size/cpuFreq)
+
+    if cpuFreq == 0 {
+        log.Printf( "cpuFreq is 0....")
+        return 0
+    }
+    
+    return instanCost
+}
+
 
 //deploy request of one time interval
 func deployRequests(requests []Request){
@@ -394,16 +468,20 @@ func scheduleRequests(){
     
         deployRequests(requests)
         
+        if config_G.Testbed == 1{
         //invoke sending http request
         sendResults(requests)
+
+        }
 
         updateCache()
 
         log.Println("result node id", requests[0].Function.PhyNode.ID)
-
+        if config_G.Testbed == 1{
         //wait for the container up
         time.Sleep(60 * time.Second)
         log.Printf("wait 60 seconds .....")
+        }
     }
 
     getRequestsMapSum()
@@ -417,6 +495,9 @@ func scheduleRequests(){
 
 
     log.Printf("All algorithm finished............")
+
+    printConfig("result/fc.csv")
+    printResult("result/fc.csv")
 
 
 }
